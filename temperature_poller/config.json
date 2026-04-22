@@ -1,0 +1,24 @@
+{
+  "region": {
+    "prefix": "NS",
+    "name": "North Station"
+  },
+  "api": {
+    "base_url": "http://localhost:8001",
+    "hosts_endpoint": "/api/v1/hosts"
+  },
+  "polling": {
+    "chunk_size": 10,
+    "checkpoint_interval": 100,
+    "poll_interval_hours": 1,
+    "hosts_ttl_hours": 24,
+    "max_checkpoint_age_hours": 2.0
+  },
+  "database": {
+    "base_dir": "databases",
+    "auto_cleanup_days": 60
+  },
+  "checkpoint": {
+    "path": "emergency_checkpoint.json"
+  }
+}
