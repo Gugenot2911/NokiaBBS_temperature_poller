@@ -1,0 +1,22 @@
+# Зависимости для портативной версии Temperature Poller
+
+# FastAPI и сервер
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6
+
+# Валидация данных
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# Асинхронность
+anyio>=4.0.0
+
+# HTTP клиент
+requests>=2.31.0
+
+# Логирование
+python-json-logger>=2.0.7
+
+# Утилиты
+python-dateutil>=2.8.2
