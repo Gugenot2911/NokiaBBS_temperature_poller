@@ -72,13 +72,13 @@ def main():
     
     # Показываем конфигурацию региона
     print(f"\n📍 Регион:")
-    print(f"   Префикс: {settings.REGION_PREFIX if settings.REGION_PREFIX else 'NS (default)'}")
+    print(f"   Префикс: NS (из config.json)")
     
     # Переопределяем настройки из аргументов командной строки
-    host = args.host or settings.HOST if hasattr(settings, 'HOST') and settings.HOST else "0.0.0.0"
-    port = args.port or settings.PORT if hasattr(settings, 'PORT') and settings.PORT else 8000
-    reload = args.reload if args.reload is not None else (settings.RELOAD if hasattr(settings, 'RELOAD') else False)
-    log_level = args.log_level or settings.LOG_LEVEL if hasattr(settings, 'LOG_LEVEL') and settings.LOG_LEVEL else "info"
+    host = args.host or settings.host
+    port = args.port or settings.port
+    reload = args.reload if args.reload is not None else settings.reload
+    log_level = args.log_level or settings.log_level
     
     print(f"\n📡 Сервер:")
     print(f"   Host: {host}")

@@ -176,6 +176,16 @@ python -m api.main
 | `POST` | `/api/v1/poll/manual` | Ручной опрос хостов |
 | `POST` | `/api/v1/poll/hosts/refresh` | Обновление списка хостов |
 
+### Управление сервером 🆕
+
+| Метод | Эндпоинт | Описание |
+|-------|----------|----------|
+| `GET` | `/api/v1/system/status` | Текущий статус системы |
+| `POST` | `/api/v1/system/pause` | Приостановка опросов |
+| `POST` | `/api/v1/system/resume` | Возобновление опросов |
+| `POST` | `/api/v1/system/restart` | Перезапуск сервера |
+| `POST` | `/api/v1/system/reload-config` | Перезагрузка конфигурации |
+
 ### Температурные данные
 
 | Метод | Эндпоинт | Описание |
@@ -194,6 +204,61 @@ python -m api.main
 | `GET` | `/api/v1/status/databases` | Статус баз данных |
 
 ## 💡 Примеры использования
+
+### Управление состоянием сервера 🆕
+
+#### Получение статуса системы
+
+```bash
+curl http://localhost:8000/api/v1/system/status
+# {
+#   "server_state": "running",
+#   "is_polling": false,
+#   "uptime_seconds": 3600.5,
+#   "paused_since": null
+# }
+```
+
+#### Приостановка опросов (для обслуживания)
+
+```bash
+# Приостановить
+curl -X POST http://localhost:8000/api/v1/system/pause
+# {"success": true, "server_state": "paused"}
+
+# Проверить статус
+curl http://localhost:8000/health
+# {"status": "paused", "server_state": "paused"}
+
+# Возобновить
+curl -X POST http://localhost:8000/api/v1/system/resume
+# {"success": true, "server_state": "running"}
+```
+
+#### Перезапуск сервера
+
+```bash
+# Перезапуск с задержкой 5 секунд
+curl -X POST http://localhost:8000/api/v1/system/restart \
+  -H "Content-Type: application/json" \
+  -d '{"delay_seconds": 5, "notify": true}'
+
+# Перезагрузка конфигурации без перезапуска
+curl -X POST http://localhost:8000/api/v1/system/reload-config
+```
+
+#### Клавиатурные сочетания (Unix/Linux)
+
+```bash
+# Пауза процесса (аналог API pause)
+Ctrl+Z
+
+# Возобновление (аналог API resume)
+fg
+
+# Сигнал для мягкого перезапуска
+kill -HUP <pid>
+```
 
 ### Запуск массового опроса
 
@@ -280,7 +345,9 @@ print(f"RRU аномалии: {data['rru_anomaly_count']}")
 | `api.base_url` | Базовый URL API | `http://localhost:8001` |
 | `api.hosts_endpoint` | Эндпоинт для получения хостов | `/api/v1/hosts` |
 | `polling.chunk_size` | Размер чанка опроса | `10` |
+| `polling.poll_interval_hours` | Интервал массовых опросов (часов) | `1` |
 | `database.base_dir` | Директория БД | `databases` |
+| `checkpoint.path` | Путь к файлу checkpoint | `emergency_checkpoint.json` |
 
 **URL API формируется автоматически:**
 ```
@@ -360,6 +427,292 @@ curl http://localhost:8000/health
 # Список эндпоинтов
 curl http://localhost:8000/
 ```
+
+## 🔌 Заглушки (Mock) для тестирования
+
+### 📦 Что заглушено
+
+В проекте используется заглушка `nokia_polling` для тестирования без реального оборудования:
+
+**Файл:** `nokia_polling/get_nokia_measurements.py`
+
+**Что делает:**
+- Возвращает тестовые данные температур вместо реального опроса
+- Генерирует случайные значения для RRU и BBU (15-60°C)
+- Не требует сетевого доступа к устройствам
+- Имитирует задержки сети (50-200 мс)
+
+**Пример данных заглушки:**
+```json
+{
+  "hostname": "NS0002",
+  "ip": "10.8.234.129",
+  "temperature": {
+    "RRU": {"max": 45, "min": 25, "avg": 35},
+    "BBU": {"max": 38, "min": 28, "avg": 33}
+  },
+  "status": "success"
+}
+```
+
+### 🚀 Как отключить заглушки в продакшене
+
+#### Шаг 1: Удалить или переместить заглушку
+
+```bash
+# Вариант 1: Удалить (безвозвратно)
+rm -rf nokia_polling/
+
+# Вариант 2: Переместить (для возможности восстановления)
+mv nokia_polling nokia_polling_disabled
+
+# Вариант 3: Переименовать (Git-friendly)
+git mv nokia_polling nokia_polling_mock
+```
+
+#### Шаг 2: Подключить реальный модуль опроса
+
+Создайте `nokia_polling/` с реальной реализацией:
+
+```
+nokia_polling/
+├── __init__.py
+└── get_nokia_measurements.py  # Реальная реализация
+```
+
+**Требования к реальной реализации:**
+
+```python
+#!/usr/bin/env python3
+"""
+Реальный модуль опроса Nokia устройств.
+Заменяет заглушку в production.
+"""
+
+from typing import List, Dict, Any
+
+def nokia_polling_module(
+    sites: List[Dict[str, Any]],
+    fields: set = None,
+    batch_size: int = 10,
+    check_availability: bool = True,
+    ping_timeout: int = 1
+) -> List[Dict[str, Any]]:
+    """
+    Опрос реальных устройств Nokia.
+    
+    Args:
+        sites: список хостов для опроса
+        fields: поля для опроса (temperature)
+        batch_size: размер батча
+        check_availability: проверять доступность (ping)
+        ping_timeout: таймаут ping в секундах
+    
+    Returns:
+        Список результатов опроса в формате:
+        [
+            {
+                "hostname": "NS0002",
+                "ip": "10.8.234.129",
+                "temperature": {
+                    "RRU": {"max": 45, "min": 25, "avg": 35},
+                    "BBU": {"max": 38, "min": 28, "avg": 33}
+                },
+                "status": "success",
+                "availability": True
+            }
+        ]
+    """
+    # Реализация через SNMP/CLI/SSH
+    # Примеры библиотек:
+    # - netmiko (SSH)
+    # - pysnmp (SNMP)
+    # - paramiko (SSH)
+    # - subprocess (CLI)
+    pass
+```
+
+**Пример реальной реализации через SNMP:**
+
+```python
+from pysnmp.hlapi import *
+
+def nokia_polling_module(sites, **kwargs):
+    results = []
+    
+    for site in sites:
+        hostname = site['hostname']
+        ip = site['ip']
+        
+        # SNMP опрос температурных OID
+        error_ind, error_status, error_index, var_binds = next(
+            getCmd(SnmpEngine(),
+                   CommunityData('public'),
+                   UdpTransportTarget((ip, 161)),
+                   ContextData(),
+                   ObjectType(ObjectIdentity('1.3.6.1.4.1.56297.1.1'))  # Nokia temp OID
+            )
+        )
+        
+        if not error_ind:
+            temp_data = parse_nokia_snmp(var_binds)
+            results.append({
+                "hostname": hostname,
+                "ip": ip,
+                "temperature": temp_data,
+                "status": "success",
+                "availability": True
+            })
+    
+    return results
+```
+
+#### Шаг 3: Проверка подключения
+
+```bash
+# Запустить тестовый опрос
+curl -X POST http://localhost:8000/api/v1/poll/manual \
+  -H "Content-Type: application/json" \
+  -d '{"hostnames": ["NS0002"], "force": true}'
+
+# Проверить логи сервера
+# Если заглушка удалена — будут ошибки импорта
+# Если подключён реальный модуль — успешный опрос
+```
+
+#### 🔍 Автоматическая проверка режима
+
+```bash
+#!/bin/bash
+# check_mode.sh — определить режим работы
+
+if [ -d "nokia_polling" ]; then
+    if grep -q "MOCK" nokia_polling/get_nokia_measurements.py 2>/dev/null; then
+        echo "⚠️  РЕЖИМ: ЗАГЛУШКА (MOCK)"
+        echo "   Заглушка обнаружена! Удалите её для production."
+        exit 1
+    else
+        echo "✅ РЕЖИМ: PRODUCTION"
+        echo "   Реальный модуль опроса подключён."
+        exit 0
+    fi
+else
+    echo "❌ ОШИБКА: Модуль nokia_polling не найден!"
+    echo "   Создайте модуль или восстановите заглушку для тестирования."
+    exit 2
+fi
+```
+
+#### 🔧 Использование переменных окружения
+
+```bash
+# Принудительное использование заглушки (для тестирования)
+export USE_MOCK=true
+python run_api.py
+
+# Принудительное использование реального модуля
+export USE_MOCK=false
+python run_api.py
+```
+
+### 🔄 Переключение между режимами
+
+**Разработка (заглушка):**
+```bash
+# Ветка с заглушкой
+git checkout mock
+python run_api.py
+
+# Логирование:
+# "⚠️  MOCK: Опрос 10 хостов (заглушка)"
+```
+
+**Production (реальный опрос):**
+```bash
+# Ветка production
+git checkout production
+
+# Проверка:
+./check_mode.sh
+# Вывод: "✅ РЕЖИМ: PRODUCTION"
+
+python run_api.py
+```
+
+**Гибридный подход (рекомендуется):**
+
+```bash
+# Хранить заглушку в отдельной директории
+mkdir -p mocks/
+mv nokia_polling mocks/nokia_polling_mock
+
+# Создать скрипт переключения
+cat > switch_mode.sh << 'EOF'
+#!/bin/bash
+case "$1" in
+    mock)
+        mv mocks/nokia_polling_mock nokia_polling
+        echo "✅ Переключено в режим MOCK"
+        ;;
+    production)
+        mv nokia_polling mocks/nokia_polling_mock
+        echo "✅ Переключено в режим PRODUCTION"
+        ;;
+    *)
+        echo "Usage: $0 {mock|production}"
+        exit 1
+        ;;
+esac
+EOF
+
+chmod +x switch_mode.sh
+
+# Использование:
+./switch_mode.sh mock      # Тестирование
+./switch_mode.sh production # Production
+```
+
+### 📋 Чек-лист перед деплоем в Production
+
+```markdown
+- [ ] Заглушка `nokia_polling/` удалена или перемещена
+- [ ] Реальный модуль опроса подключён и протестирован
+- [ ] Проверены сетевые права (SNMP/SSH доступ)
+- [ ] Настроены credentials (SNMP community, SSH keys)
+- [ ] Протестирован опрос хотя бы одного устройства
+- [ ] Проверены логи на наличие ошибок
+- [ ] Настроено логирование в production (file, syslog)
+- [ ] Настроен мониторинг (health check, uptime)
+- [ ] Протестирована обработка ошибок (timeout, unreachable hosts)
+- [ ] Настроено резервное копирование БД
+```
+
+### ⚠️ Важные замечания
+
+1. **Заглушка не требует прав root** — работает без сетевых прав
+2. **Реальный модуль может требовать:**
+   - Доступ к сетевым устройствам по SNMP/SSH
+   - SNMP community strings (обычно `public` для read-only)
+   - SSH credentials (username/password или keys)
+   - Открытые порты: 161 (SNMP), 22 (SSH)
+3. **Всегда тестируйте с заглушкой перед деплоем**
+4. **Используйте feature flags для переключения:**
+   ```bash
+   export USE_MOCK=true  # или false
+   ```
+5. **Проверяйте режим перед запуском в production:**
+   ```bash
+   ./check_mode.sh || exit 1
+   python run_api.py
+   ```
+6. **Заглушка генерирует случайные данные** — не используйте для отчётности
+
+### 📚 Дополнительные ресурсы
+
+- [API Документация](api/README.md)
+- [Конфигурация](CONFIG.md)
+- [Системное управление](SYSTEM_CONTROL.md) ⭐
+- [Инструкция по сборке Windows](BUILD_INSTRUCTIONS.txt)
 
 ## 📝 Лицензия
 

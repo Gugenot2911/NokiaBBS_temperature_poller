@@ -871,13 +871,14 @@ class PollingManager:
 # =============================================================================
 
 def create_polling_manager(
-    api_url: str,
+    api_url: Optional[str] = None,
     db_base_dir: str = "databases",
     checkpoint_path: str = "emergency_checkpoint.json",
     chunk_size: int = 10,
     checkpoint_interval: int = 100,
     poll_interval_hours: int = 1,
-    hosts_ttl_hours: int = 24
+    hosts_ttl_hours: int = 24,
+    config: Optional[PollingManagerConfig] = None
 ) -> PollingManager:
     """
     Фабрика для создания менеджера опроса.
@@ -890,6 +891,7 @@ def create_polling_manager(
         checkpoint_interval: интервал сохранения checkpoint
         poll_interval_hours: интервал между опросами
         hosts_ttl_hours: TTL кэша хостов
+        config: готовый объект конфигурации (альтернатива параметрам выше)
     
     Returns:
         PollingManager
@@ -899,9 +901,17 @@ def create_polling_manager(
         ...     api_url="http://api.example.com/hosts",
         ...     chunk_size=10
         ... )
+        >>>
+        >>> # Или с готовым config:
+        >>> config = PollingManagerConfig(api_url="...")
+        >>> manager = create_polling_manager(config=config)
     """
+    if config is not None:
+        # Использовать готовый config
+        return PollingManager(config)
+    
     config = PollingManagerConfig(
-        api_url=api_url,
+        api_url=api_url or "http://localhost:8001/api/v1/hosts?prefix=NS",
         db_base_dir=db_base_dir,
         checkpoint_path=checkpoint_path,
         chunk_size=chunk_size,
