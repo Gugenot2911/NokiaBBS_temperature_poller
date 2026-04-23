@@ -13,9 +13,13 @@ REST API для:
 
 import asyncio
 import logging
+import signal
+import os
+import sys
 from contextlib import asynccontextmanager
 from typing import Optional, List
 from datetime import datetime
+from enum import Enum
 
 from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -36,8 +40,15 @@ app_config = get_config()
 
 
 # =============================================================================
-# Глобальное состояние
+# Управление состоянием сервера
 # =============================================================================
+
+class ServerState(str, Enum):
+    """Состояние сервера"""
+    RUNNING = "running"
+    PAUSED = "paused"
+    STOPPED = "stopped"
+
 
 class APIState:
     """Глобальное состояние API"""
@@ -45,9 +56,43 @@ class APIState:
     db_manager: Optional[TemperatureDBManager] = None
     background_tasks: asyncio.Queue = None
     is_shutting_down: bool = False
+    server_state: ServerState = ServerState.RUNNING
+    pause_event: asyncio.Event = None
+    start_time: Optional[datetime] = None
+
+    def __init__(self):
+        """Инициализация событий паузы"""
+        self.pause_event = asyncio.Event()
+        self.pause_event.set()  # По умолчанию не приостановлено
 
 
 state = APIState()
+
+
+# =============================================================================
+# Обработка сигналов клавиатуры
+# =============================================================================
+
+def setup_signal_handlers():
+    """Настройка обработчиков сигналов для паузы/возобновления"""
+    
+    def handle_pause_signal(signum, frame):
+        """Обработчик сигнала SIGTSTP (Ctrl+Z)"""
+        if state.server_state == ServerState.RUNNING:
+            logger.warning("⏸️  Получен сигнал паузы (SIGTSTP)")
+            state.server_state = ServerState.PAUSED
+            state.pause_event.clear()
+            logger.warning("Сервер приостановлен. Используйте /api/v1/system/resume для продолжения")
+        elif state.server_state == ServerState.PAUSED:
+            logger.warning("▶️  Получен сигнал возобновления")
+            state.server_state = ServerState.RUNNING
+            state.pause_event.set()
+            logger.warning("Сервер возобновлён")
+    
+    # Поддержка только на Unix-системах
+    if hasattr(signal, 'SIGTSTP'):
+        signal.signal(signal.SIGTSTP, handle_pause_signal)
+        logger.info("Обработчик Ctrl+Z (SIGTSTP) установлен")
 
 
 # =============================================================================
@@ -77,12 +122,20 @@ async def lifespan(app: FastAPI):
         poll_interval_hours=app_config.polling.poll_interval_hours,
         hosts_ttl_hours=app_config.polling.hosts_ttl_hours
     )
-    
-    state.manager = create_polling_manager(config)
+
+    state.manager = create_polling_manager(config=config)
     state.db_manager = TemperatureDBManager(base_dir=app_config.database.base_dir)
     state.background_tasks = asyncio.Queue()
+    state.start_time = datetime.now()
+
+    # Настройка обработчиков сигналов
+    setup_signal_handlers()
     
     logger.info("✅ API сервер готов к работе")
+    logger.info("🎮 Управление:")
+    logger.info("   - Ctrl+Z: Пауза/возобновление")
+    logger.info("   - POST /api/v1/system/pause: Приостановить опросы")
+    logger.info("   - POST /api/v1/system/resume: Возобновить опросы")
     
     yield
     
@@ -110,7 +163,12 @@ app = FastAPI(
 - **Опрос устройств**: массовый и ручной опрос температур
 - **Данные**: трехуровневый доступ к температурным данным
 - **Мониторинг**: статус системы и статистика
-- **Управление**: обновление списка хостов
+- **Управление хостами**: обновление списка хостов
+- **Управление сервером**: пауза, продолжение, перезапуск
+
+### Управление состоянием:
+- **Ctrl+Z**: Приостановка/возобновление процесса
+- **API endpoints**: Программное управление
 
 ### Аутентификация:
 На данный момент аутентификация не требуется (локальный сервис).
@@ -199,6 +257,14 @@ class APIHealthResponse(BaseModel):
     status: str
     timestamp: str
     version: str = "1.0.0"
+    server_state: str = "running"
+
+
+class SystemStatusResponse(BaseModel):
+    server_state: str
+    is_polling: bool
+    uptime_seconds: Optional[float] = None
+    paused_since: Optional[str] = None
 
 
 # =============================================================================
@@ -209,8 +275,9 @@ class APIHealthResponse(BaseModel):
 async def health_check():
     """Проверка здоровья API"""
     return APIHealthResponse(
-        status="healthy",
-        timestamp=datetime.now().isoformat()
+        status="healthy" if state.server_state == ServerState.RUNNING else "paused",
+        timestamp=datetime.now().isoformat(),
+        server_state=state.server_state.value
     )
 
 
@@ -220,13 +287,108 @@ async def root():
     return {
         "service": "Temperature Poller API",
         "version": "1.0.0",
+        "server_state": state.server_state.value,
         "docs": "/docs",
         "endpoints": {
             "polling": "/api/v1/poll/",
             "hosts": "/api/v1/hosts/",
             "temperature": "/api/v1/temperature/",
-            "status": "/api/v1/status/"
+            "status": "/api/v1/status/",
+            "system": "/api/v1/system/"
         }
+    }
+
+
+# =============================================================================
+# Эндпоинты управления системой (System Control)
+# =============================================================================
+
+@app.get(
+    "/api/v1/system/status",
+    response_model=SystemStatusResponse,
+    tags=["System Control"]
+)
+async def get_system_status():
+    """
+    Получение текущего статуса системы.
+    
+    Возвращает состояние сервера (running/paused/stopped),
+    информацию об опросе и время работы.
+    """
+    import time
+    
+    uptime = None
+    if state.start_time:
+        uptime = (datetime.now() - state.start_time).total_seconds()
+    
+    return SystemStatusResponse(
+        server_state=state.server_state.value,
+        is_polling=state.manager._is_polling if state.manager else False,
+        uptime_seconds=round(uptime, 2) if uptime else None
+    )
+
+
+@app.post(
+    "/api/v1/system/pause",
+    tags=["System Control"]
+)
+async def pause_server():
+    """
+    Приостановка опросов.
+    
+    Сервер продолжает работать, но не запускает новые опросы.
+    Активные опросы завершатся нормально.
+    
+    **Аналог Ctrl+Z для процесса.**
+    """
+    if state.server_state == ServerState.PAUSED:
+        return {
+            "success": False,
+            "message": "Сервер уже приостановлен",
+            "server_state": state.server_state.value
+        }
+    
+    state.server_state = ServerState.PAUSED
+    state.pause_event.clear()
+    
+    logger.warning("⏸️  Сервер приостановлен через API")
+    
+    return {
+        "success": True,
+        "message": "Сервер приостановлен. Новые опросы не будут запускаться.",
+        "server_state": state.server_state.value,
+        "resume_command": "POST /api/v1/system/resume"
+    }
+
+
+@app.post(
+    "/api/v1/system/resume",
+    tags=["System Control"]
+)
+async def resume_server():
+    """
+    Возобновление опросов.
+    
+    Возвращает сервер в нормальное состояние.
+    
+    **Аналог `fg` после Ctrl+Z.**
+    """
+    if state.server_state == ServerState.RUNNING:
+        return {
+            "success": False,
+            "message": "Сервер уже работает",
+            "server_state": state.server_state.value
+        }
+    
+    state.server_state = ServerState.RUNNING
+    state.pause_event.set()
+    
+    logger.info("▶️  Сервер возобновлён")
+    
+    return {
+        "success": True,
+        "message": "Сервер возобновлён. Опросы продолжаются.",
+        "server_state": state.server_state.value
     }
 
 
@@ -244,10 +406,18 @@ async def start_mass_poll(background_tasks: BackgroundTasks):
     Запуск массового опроса всех хостов.
     
     Асинхронная операция. Возвращает подтверждение запуска.
+    
+    **Проверяет состояние паузы.**
     """
     if state.manager is None:
         raise HTTPException(status_code=503, detail="Менеджер опроса не инициализирован")
     
+    if state.server_state == ServerState.PAUSED:
+        raise HTTPException(
+            status_code=423, 
+            detail="Сервер приостановлен. Используйте /api/v1/system/resume"
+        )
+        
     if state.is_shutting_down:
         raise HTTPException(status_code=503, detail="Сервис останавливается")
     
@@ -261,7 +431,7 @@ async def start_mass_poll(background_tasks: BackgroundTasks):
         _run_mass_poll_task,
         state.manager
     )
-    
+
     return ManualPollResponse(
         success=True,
         success_count=0,
