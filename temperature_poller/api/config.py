@@ -3,12 +3,41 @@
 Конфигурация API сервиса.
 
 Читает настройки из переменных окружения с дефолтными значениями.
+Приоритет:
+1. Переменные окружения
+2. app_config.py (config.json)
+3. Значения по умолчанию
 """
 
 import os
 from typing import Optional
 from pydantic import Field
 from pydantic_settings import BaseSettings
+
+
+def _get_default_api_url() -> str:
+    """
+    Получение URL API по умолчанию.
+    
+    Приоритет:
+    1. Переменная окружения API_BASE_URL
+    2. app_config.py (config.json)
+    3. Hardcoded fallback
+    """
+    # Сначала проверяем переменную окружения
+    if os.environ.get('API_BASE_URL'):
+        region_prefix = os.environ.get('REGION_PREFIX', 'NS')
+        return f"{os.environ['API_BASE_URL']}/api/v1/hosts?prefix={region_prefix}"
+    
+    # Пытаемся получить из app_config
+    try:
+        from app_config import get_hosts_api_url
+        return get_hosts_api_url()
+    except (ImportError, Exception):
+        pass
+    
+    # Fallback
+    return "http://localhost:8001/api/v1/hosts?prefix=NS"
 
 
 class APISettings(BaseSettings):
@@ -22,7 +51,7 @@ class APISettings(BaseSettings):
     
     # Polling Manager
     api_url: str = Field(
-        default="http://localhost:8001/api/v1/hosts?prefix=NS",
+        default_factory=_get_default_api_url,
         description="URL API для получения списка хостов"
     )
     db_base_dir: str = Field(default="databases", description="Директория баз данных")
