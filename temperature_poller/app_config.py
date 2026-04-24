@@ -254,11 +254,12 @@ def get_hosts_api_url() -> str:
 # =============================================================================
 
 if __name__ == "__main__":
-    config = get_config()
-    config.print_config()
+    loader = ConfigLoader()
+    loader.print_config()
     
     print("\n🔧 Примеры использования в коде:")
     print(f"   from app_config import get_config")
+    config = get_config()
     print(f"   config = get_config()")
     print(f"   print(config.region.prefix)  # '{config.region.prefix}'")
     print(f"   print(config.get_hosts_api_url())  # '{config.get_hosts_api_url()}'")

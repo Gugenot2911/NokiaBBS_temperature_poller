@@ -232,6 +232,13 @@ set HOST=0.0.0.0
 set PORT=8000
 set LOG_LEVEL=info
 
+REM Настройки API (можно изменить в config.json или здесь)
+REM set API_BASE_URL=http://WSNS-LAVROV2:8001
+REM set REGION_PREFIX=NS
+
+REM Для тестовой среды раскомментируйте:
+REM set API_BASE_URL=http://localhost:8001
+
 python run_api.py %%*
 
 echo.
@@ -267,8 +274,25 @@ TEMPERATURE POLLER API - ПОРТАТИВНАЯ ВЕРСИЯ
    http://localhost:8000/redoc
 
 НАСТРОЙКА:
-   - config.json - конфигурация проекта
+   - config.json - конфигурация проекта (URL API, регион и т.д.)
    - api/.env - настройки сервера (HOST, PORT, LOG_LEVEL)
+   - START.bat - переменные окружения (API_BASE_URL, REGION_PREFIX)
+
+НАСТРОЙКА API:
+   Способ 1: Редактирование config.json
+   {
+     "api": {
+       "base_url": "http://WSNS-LAVROV2:8001",
+       "hosts_endpoint": "/api/v1/hosts"
+     }
+   }
+
+   Способ 2: Переменные окружения в START.bat
+   set API_BASE_URL=http://WSNS-LAVROV2:8001
+   set REGION_PREFIX=NS
+
+   Способ 3: Командная строка
+   python run_api.py --port 8080
 
 ПАРАМЕТРЫ ЗАПУСКА:
    START.bat --port 8080           # Изменить порт
@@ -278,18 +302,24 @@ TEMPERATURE POLLER API - ПОРТАТИВНАЯ ВЕРСИЯ
 СТРУКТУРА:
    temperature-poller-portable/
    ├── START.bat              <- Запуск
-   ├── config.json            <- Конфигурация
+   ├── config.json            <- Конфигурация (URL API, регион)
    ├── run_api.py             <- Скрипт запуска
+   ├── app_config.py          <- Загрузчик конфигурации
    ├── api/                   <- FastAPI сервер
    │   ├── main.py
    │   ├── config.py
    │   └── .env               <- Настройки сервера
-   └── databases/             <- Базы данных (создаётся)
+   ├── databases/             <- Базы данных (создаётся)
+   └── README.txt             <- Этот файл
 
 ПРИМЕЧАНИЯ:
    - Не требует прав администратора
    - Не требует установки Python
    - Все данные в папке databases/
+   - URL API настраивается через config.json
+
+ПРОВЕРКА КОНФИГУРАЦИИ:
+   python -c "from app_config import get_config; c = get_config(); print(c.get_hosts_api_url())"
 
 ==========================================
 """)

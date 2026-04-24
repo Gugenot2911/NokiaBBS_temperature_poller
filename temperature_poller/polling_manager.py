@@ -910,8 +910,17 @@ def create_polling_manager(
         # Использовать готовый config
         return PollingManager(config)
     
+    # Если api_url не передан, используем значение из app_config
+    if api_url is None:
+        try:
+            from app_config import get_hosts_api_url
+            api_url = get_hosts_api_url()
+        except ImportError:
+            # Fallback только если app_config недоступен
+            api_url = "http://localhost:8001/api/v1/hosts?prefix=NS"
+    
     config = PollingManagerConfig(
-        api_url=api_url or "http://localhost:8001/api/v1/hosts?prefix=NS",
+        api_url=api_url,
         db_base_dir=db_base_dir,
         checkpoint_path=checkpoint_path,
         chunk_size=chunk_size,
