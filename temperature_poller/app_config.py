@@ -22,7 +22,7 @@ class RegionConfig:
 @dataclass
 class APIConfig:
     """Конфигурация API"""
-    base_url: str = "http://localhost:8001"
+    base_url: str = ""
     hosts_endpoint: str = "/api/v1/hosts"
     
     @property
@@ -65,6 +65,11 @@ class AppConfig:
     
     def get_hosts_api_url(self) -> str:
         """Получение URL API для получения хостов с учётом префикса региона"""
+        if not self.api.base_url:
+            raise ValueError(
+                "API base_url не настроен. Установите 'api.base_url' в config.json "
+                "или переменную окружения API_BASE_URL"
+            )
         # Добавляем параметр prefix к URL
         base_url = self.api.hosts_url
         separator = "&" if "?" in base_url else "?"

@@ -22,7 +22,10 @@ def _get_default_api_url() -> str:
     Приоритет:
     1. Переменная окружения API_BASE_URL
     2. app_config.py (config.json)
-    3. Hardcoded fallback
+    3. Ошибка (требуется явное указание URL)
+    
+    Raises:
+        RuntimeError: если URL не настроен ни одним из способов
     """
     # Сначала проверяем переменную окружения
     if os.environ.get('API_BASE_URL'):
@@ -33,11 +36,12 @@ def _get_default_api_url() -> str:
     try:
         from app_config import get_hosts_api_url
         return get_hosts_api_url()
-    except (ImportError, Exception):
-        pass
-    
-    # Fallback
-    return "http://localhost:8001/api/v1/hosts?prefix=NS"
+    except (ImportError, Exception) as e:
+        raise RuntimeError(
+            "API URL не настроен. Установите переменную окружения API_BASE_URL "
+            "или создайте config.json с корректным base_url. "
+            f"Ошибка загрузки: {e}"
+        )
 
 
 class APISettings(BaseSettings):

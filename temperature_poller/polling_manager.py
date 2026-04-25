@@ -915,9 +915,12 @@ def create_polling_manager(
         try:
             from app_config import get_hosts_api_url
             api_url = get_hosts_api_url()
-        except ImportError:
-            # Fallback только если app_config недоступен
-            api_url = "http://localhost:8001/api/v1/hosts?prefix=NS"
+        except ImportError as e:
+            raise RuntimeError(
+                "API URL не настроен. Установите переменную окружения API_BASE_URL "
+                "или создайте config.json с корректным base_url. "
+                f"Ошибка загрузки: {e}"
+            )
     
     config = PollingManagerConfig(
         api_url=api_url,
@@ -940,9 +943,8 @@ if __name__ == "__main__":
     # Настройка логирования
     logger = setup_logging(level=logging.INFO)
     #
-    # # Создание менеджера (с тестовым API)
+    # # Создание менеджера (с URL из config.json)
     manager = create_polling_manager(
-        api_url="http://localhost:8001/api/v1/hosts?prefix=NS",
         chunk_size=10,
         checkpoint_interval=100
     )

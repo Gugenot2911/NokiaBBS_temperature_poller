@@ -4,7 +4,7 @@
     "name": "Europe Station"
   },
   "api": {
-    "base_url": "http://localhost:8001",
+    "base_url": "http://WSNS-LAVROV2:8001",
     "hosts_endpoint": "/api/v1/hosts"
   },
   "polling": {

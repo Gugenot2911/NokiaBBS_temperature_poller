@@ -17,11 +17,11 @@ def _get_default_api_url_test() -> str:
         from app_config import get_hosts_api_url
         return get_hosts_api_url()
     except (ImportError, Exception) as e:
-        print(f"app_config import error: {e}")
-        pass
-    
-    # Fallback
-    return "http://localhost:8001/api/v1/hosts?prefix=NS"
+        raise RuntimeError(
+            "API URL не настроен. Установите переменную окружения API_BASE_URL "
+            "или создайте config.json с корректным base_url. "
+            f"Ошибка загрузки: {e}"
+        )
 
 print("Тест _get_default_api_url():")
 result = _get_default_api_url_test()
