@@ -21,7 +21,7 @@ def _get_default_api_url() -> str:
     
     Приоритет:
     1. Переменная окружения API_BASE_URL
-    2. app_config.py (config.json)
+    2. config.json (app_config)
     3. Ошибка (требуется явное указание URL)
     
     Raises:
@@ -32,11 +32,41 @@ def _get_default_api_url() -> str:
         region_prefix = os.environ.get('REGION_PREFIX', 'NS')
         return f"{os.environ['API_BASE_URL']}/api/v1/hosts?prefix={region_prefix}"
     
-    # Пытаемся получить из app_config
+    # Пытаемся получить из config.json
     try:
-        from app_config import get_hosts_api_url
-        return get_hosts_api_url()
-    except (ImportError, Exception) as e:
+        config_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            'config.json'
+        )
+        with open(config_path, 'r', encoding='utf-8') as f:
+            import json
+            config = json.load(f)
+
+        base_url = config.get('api', {}).get('base_url')
+        if not base_url:
+            raise ValueError("base_url не найден в config.json")
+
+        region_prefix = config.get('region', {}).get('prefix', 'NS')
+        return f"{base_url}/api/v1/hosts?prefix={region_prefix}"
+    
+    except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError) as e:
+        raise RuntimeError(
+            "API URL не настроен. Установите переменную окружения API_BASE_URL "
+            "или создайте config.json с корректным base_url. "
+            f"Ошибка загрузки: {e}"
+        )
+        with open(config_path, 'r', encoding='utf-8') as f:
+            import json
+            config = json.load(f)
+
+        base_url = config.get('api', {}).get('base_url')
+        if not base_url:
+            raise ValueError("base_url не найден в config.json")
+
+        region_prefix = config.get('region', {}).get('prefix', 'NS')
+        return f"{base_url}/api/v1/hosts?prefix={region_prefix}"
+    
+    except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError) as e:
         raise RuntimeError(
             "API URL не настроен. Установите переменную окружения API_BASE_URL "
             "или создайте config.json с корректным base_url. "

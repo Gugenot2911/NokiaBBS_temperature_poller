@@ -72,7 +72,21 @@ def main():
     
     # Показываем конфигурацию региона
     print(f"\n📍 Регион:")
-    print(f"   Префикс: NS (из config.json)")
+    # Читаем из config.json
+    try:
+        config_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            'config.json'
+        )
+        with open(config_path, 'r', encoding='utf-8') as f:
+            import json
+            config = json.load(f)
+        prefix = config.get('region', {}).get('prefix', 'NS')
+        name = config.get('region', {}).get('name', 'Unknown')
+        print(f"   Префикс: {prefix}")
+        print(f"   Название: {name}")
+    except Exception:
+        print(f"   Префикс: NS (по умолчанию)")
     
     # Переопределяем настройки из аргументов командной строки
     host = args.host or settings.host
