@@ -23,16 +23,17 @@ AVAILABLE_COMMANDS = {
 
 
 async def run_cli_command_async(host: str, command: str, verbose: bool = False) -> str:
-
+    """Асинхронно выполняет CLI команду и возвращает сырой вывод."""
+    
     # Проверка существования файла перед использованием
     if not _ADMIN_CLI_PATH.exists():
         async with print_lock:
             print(f"❌ Ошибка: admin-cli.bat не найден по пути: {_ADMIN_CLI_PATH}")
         return 'not_nokia'
-    
-    """Асинхронно выполняет CLI команду и возвращает сырой вывод."""
+
+    # Используем переменную _ADMIN_CLI_PATH вместо хардкода
     cmd = [
-        r"D:\Documents\PythonProject\CA_analise\experiment_CA_analise\nokia_polling\script_nokia\admin-cli.bat",
+        str(_ADMIN_CLI_PATH),
         "--bts-host", host,
         "--bts-port", "443",
         "--bts-username", "Nemuadmin",
@@ -208,15 +209,18 @@ async def poll_sites_batch(
     # Опрашиваем только доступные сайты
     tasks = []
     for site in sites:
-        # Если availability явно установлен в False, не опрашиваем
-        if site.get('availability') is False:
-            # Создаем результат сразу
+        # Проверка на False или None
+        availability = site.get('availability')
+        if availability is False:
+            # Создаем Future вручную
+            future = asyncio.Future()
             result = site.copy()
             result["voltage"] = None
             result["alarms"] = None
             result["temperature"] = None
             result["status"] = "unavailable"
-            tasks.append(asyncio.sleep(0, result=result))
+            future.set_result(result)
+            tasks.append(future)
         else:
             tasks.append(poll_single_site(site, fields, verbose=verbose))
 
@@ -328,19 +332,25 @@ def nokia_polling_module(
         result["status"] = "skipped_vendor"
         final_results.append(result)
 
-    # Обрабатываем Nokia сайты батчами
-    for batch_idx, batch in enumerate(batches):
-        print(f"Обработка батча {batch_idx + 1}/{len(batches)}: {[s.get('hostname') for s in batch]}")
+    # Создаем один event loop для всех батчей
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    try:
+        # Обрабатываем Nokia сайты батчами
+        for batch_idx, batch in enumerate(batches):
+            print(f"Обработка батча {batch_idx + 1}/{len(batches)}: {[s.get('hostname') for s in batch]}")
 
-        # Проверка доступности выполняется внутри poll_sites_batch
-        batch_results = asyncio.run(poll_sites_batch(
-            batch,
-            fields,
-            verbose=verbose,
-            check_availability=check_availability,
-            ping_timeout=ping_timeout
-        ))
-        final_results.extend(batch_results)
+            batch_results = loop.run_until_complete(poll_sites_batch(
+                batch,
+                fields,
+                verbose=verbose,
+                check_availability=check_availability,
+                ping_timeout=ping_timeout
+            ))
+            final_results.extend(batch_results)
+    finally:
+        loop.close()
 
 
     final_results = update_all_sites_temperatures(final_results)
