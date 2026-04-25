@@ -1,9 +1,15 @@
 import json
 import asyncio
+import os
 from typing import List, Dict, Any, Optional, Set
+from pathlib import Path
 
 from alarms_extraction.temperature_extraction import update_all_sites_temperatures
 from nokia_polling.site_availability import check_availability_batch
+
+# Получаем директорию текущего файла для построения относительного пути
+_SCRIPT_DIR = Path(__file__).parent
+_ADMIN_CLI_PATH = _SCRIPT_DIR / "script_nokia" / "admin-cli.bat"
 
 # Lock для синхронизации вывода (устраняет коллизии при параллельном опросе)
 print_lock = asyncio.Lock()
@@ -17,6 +23,13 @@ AVAILABLE_COMMANDS = {
 
 
 async def run_cli_command_async(host: str, command: str, verbose: bool = False) -> str:
+
+    # Проверка существования файла перед использованием
+    if not _ADMIN_CLI_PATH.exists():
+        async with print_lock:
+            print(f"❌ Ошибка: admin-cli.bat не найден по пути: {_ADMIN_CLI_PATH}")
+        return 'not_nokia'
+    
     """Асинхронно выполняет CLI команду и возвращает сырой вывод."""
     cmd = [
         r"D:\Documents\PythonProject\CA_analise\experiment_CA_analise\nokia_polling\script_nokia\admin-cli.bat",
