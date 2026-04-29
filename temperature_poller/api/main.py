@@ -170,6 +170,27 @@ app = FastAPI(
 - **Ctrl+Z**: Приостановка/возобновление процесса
 - **API endpoints**: Программное управление
 
+### Перезапуск сервера:
+**POST /api/v1/system/restart** - Graceful restart сервера.
+
+**Процесс перезапуска:**
+1. Устанавливаем состояние `SHUTDOWN`
+2. Ждём завершения текущего опроса (макс. 60 сек)
+3. Останавливаем фоновые задачи
+4. Перезапускаем процесс через `os.execv()`
+
+⚠️ **Внимание**: Restart требует права на выполнение процесса.
+В production рекомендуется использовать systemd/docker restart.
+
+**Пример использования:**
+```bash
+# Через curl
+curl -X POST http://localhost:8000/api/v1/system/restart
+
+# Через PowerShell
+Invoke-WebRequest -Uri http://localhost:8000/api/v1/system/restart -Method POST
+```
+
 ### Аутентификация:
 На данный момент аутентификация не требуется (локальный сервис).
     """,
@@ -271,6 +292,12 @@ class SystemStatusResponse(BaseModel):
     paused_since: Optional[str] = None
 
 
+class ServerRestartResponse(BaseModel):
+    success: bool
+    message: str
+    restart_initiated: bool
+
+
 # =============================================================================
 # Health Check
 # =============================================================================
@@ -304,6 +331,12 @@ async def root():
             "mass_poll": "POST /api/v1/poll/mass",
             "manual_poll": "POST /api/v1/poll/manual",
             "poll_sites": "POST /api/v1/poll/sites"
+        },
+        "system_endpoints": {
+            "status": "GET /api/v1/system/status",
+            "pause": "POST /api/v1/system/pause",
+            "resume": "POST /api/v1/system/resume",
+            "restart": "POST /api/v1/system/restart"
         }
     }
 
@@ -399,6 +432,108 @@ async def resume_server():
         "message": "Сервер возобновлён. Опросы продолжаются.",
         "server_state": state.server_state.value
     }
+
+
+@app.post(
+    "/api/v1/system/restart",
+    response_model=ServerRestartResponse,
+    tags=["System Control"]
+)
+async def restart_server():
+    """
+    Перезапуск сервера.
+    
+    Graceful restart с ожиданием завершения текущего опроса.
+    
+    **Процесс перезапуска:**
+    1. Устанавливаем состояние `SHUTDOWN`
+    2. Ждём завершения текущего опроса (макс. 60 сек)
+    3. Останавливаем фоновые задачи
+    4. Перезапускаем процесс через `os.execv()`
+    
+    **Аналог:** `systemctl restart temperature-poller`
+    
+    **Пример использования:**
+    ```bash
+    # Через curl
+    curl -X POST http://localhost:8000/api/v1/system/restart
+    
+    # Через PowerShell
+    Invoke-WebRequest -Uri http://localhost:8000/api/v1/system/restart -Method POST
+    
+    # Через Python
+    import requests
+    response = requests.post('http://localhost:8000/api/v1/system/restart')
+    print(response.json())
+    ```
+    
+    **Внимание:** Требует прав на выполнение процесса.
+    В production используйте systemd/docker restart.
+    """
+    if state.is_shutting_down:
+        return ServerRestartResponse(
+            success=False,
+            message="Сервер уже перезапускается",
+            restart_initiated=False
+        )
+    
+    if state.manager and state.manager._is_polling:
+        logger.warning("🔄 Текущий опрос в процессе, ожидаем завершения...")
+    
+    state.is_shutting_down = True
+    state.server_state = ServerState.STOPPED
+    
+    # Ожидание завершения опроса (макс. 60 сек)
+    max_wait = 60
+    waited = 0
+    while state.manager and state.manager._is_polling and waited < max_wait:
+        await asyncio.sleep(1)
+        waited += 1
+    
+    if state.manager and state.manager._is_polling:
+        logger.warning(f"⚠️ Опрос не завершился за {max_wait}сек, принудительное завершение")
+    
+    # Ожидание фоновых задач
+    while not state.background_tasks.empty() and waited < max_wait:
+        await asyncio.sleep(1)
+        waited += 1
+    
+    logger.info(f"🔄 Инициация перезапуска сервера (ожидание: {waited}сек)")
+    
+    # Перезапуск процесса
+    try:
+        import sys
+        logger.info("🚀 Выполнение перезапуска процесса...")
+        
+        # Получаем путь к Python и скрипту
+        python = sys.executable
+        script = os.path.abspath(__file__)
+        
+        # Восстанавливаем состояние для успешного старта
+        state.is_shutting_down = False
+        state.server_state = ServerState.RUNNING
+        
+        # Перезапуск через execv (заменяет текущий процесс)
+        os.execv(python, [python, script])
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка перезапуска: {e}", exc_info=True)
+        # Восстанавливаем состояние при ошибке
+        state.is_shutting_down = False
+        state.server_state = ServerState.RUNNING
+        
+        return ServerRestartResponse(
+            success=False,
+            message=f"Ошибка перезапуска: {e}",
+            restart_initiated=False
+        )
+    
+    # Если execv успешен, этот код не достигнется
+    return ServerRestartResponse(
+        success=True,
+        message="Перезапуск инициирован",
+        restart_initiated=True
+    )
 
 
 # =============================================================================
