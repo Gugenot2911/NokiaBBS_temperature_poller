@@ -215,6 +215,10 @@ class ManualPollRequest(BaseModel):
     force: bool = Field(False, description="Принудительная перезапись")
 
 
+class SitesPollRequest(BaseModel):
+    master_sites: List[str] = Field(..., description="Список master_site для опроса")
+
+
 class ManualPollResponse(BaseModel):
     success: bool
     success_count: int
@@ -295,6 +299,11 @@ async def root():
             "temperature": "/api/v1/temperature/",
             "status": "/api/v1/status/",
             "system": "/api/v1/system/"
+        },
+        "polling_endpoints": {
+            "mass_poll": "POST /api/v1/poll/mass",
+            "manual_poll": "POST /api/v1/poll/manual",
+            "poll_sites": "POST /api/v1/poll/sites"
         }
     }
 
@@ -489,6 +498,50 @@ async def manual_poll(request: ManualPollRequest):
         )
     except Exception as e:
         logger.error(f"Ошибка ручного опроса: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post(
+    "/api/v1/poll/sites",
+    response_model=ManualPollResponse,
+    tags=["Polling"]
+)
+async def poll_sites_from_api(request: SitesPollRequest):
+    """
+    Точечный опрос через API сайтов (без кэширования).
+    
+    Получает информацию о сайтах из http://wsns-lavrov2:8001/api/v1/sites
+    и опрашивает их.
+    
+    Пример:
+    ```json
+    {
+        "master_sites": ["NS1120", "NS0830"]
+    }
+    ```
+    
+    **Не использует кэш хостов - всегда запрашивает свежие данные из API.**
+    """
+    if state.manager is None:
+        raise HTTPException(status_code=503, detail="Менеджер опроса не инициализирован")
+    
+    if not request.master_sites:
+        raise HTTPException(status_code=400, detail="Список master_site не может быть пустым")
+    
+    try:
+        result = await state.manager.fetch_and_poll_sites(
+            master_sites=request.master_sites
+        )
+    
+        return ManualPollResponse(
+            success=True,
+            success_count=result.success_count,
+            error_count=result.error_count,
+            skipped_count=result.skipped_count,
+            message=f"Опрос завершён: {result.success_count} успешно, {result.error_count} ошибок"
+        )
+    except Exception as e:
+        logger.error(f"Ошибка опроса через API сайтов: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 

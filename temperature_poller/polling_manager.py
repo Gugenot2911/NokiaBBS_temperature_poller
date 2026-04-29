@@ -57,6 +57,7 @@ import time
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 from pathlib import Path
+from urllib.parse import urlencode
 
 # Pydantic может быть не установлен в некоторых окружениях
 try:
@@ -84,6 +85,99 @@ from logging_config import setup_logging, get_logger
 
 
 logger = get_logger()
+
+
+# =============================================================================
+# API для получения информации о сайтах
+# =============================================================================
+
+class APIHostFetcher:
+    """
+    Запрос информации о конкретных сайтах через API.
+    
+    Работает с маршрутом:
+    http://wsns-lavrov2:8001/api/v1/sites?master_sites=NS1120,NS0830
+    
+    Не использует кэширование - всегда запрашивает свежие данные.
+    
+    Пример:
+        >>> fetcher = APIHostFetcher(api_base_url="http://wsns-lavrov2:8001")
+        >>> hosts = fetcher.fetch_sites(["NS1120", "NS0830"])
+        >>> for host in hosts:
+        ...     print(host.hostname, host.ip)
+    """
+    
+    def __init__(self, api_base_url: str):
+        """
+        Инициализация загрузчика сайтов.
+        
+        Args:
+            api_base_url: базовый URL API (например, http://wsns-lavrov2:8001)
+        """
+        self.api_base_url = api_base_url.rstrip('/')
+        self.sites_endpoint = "/api/v1/sites"
+    
+    def fetch_sites(self, master_sites: List[str]) -> List[TemperatureResponse]:
+        """
+        Получение информации о сайтах из API.
+        
+        Args:
+            master_sites: список master_site для запроса
+        
+        Returns:
+            Список хостов в формате TemperatureResponse
+        """
+        if not master_sites:
+            return []
+        
+        logger.debug(f"Запрос сайтов из API: {master_sites}")
+        
+        try:
+            import requests
+            
+            # Формируем URL с параметром master_sites
+            sites_param = ",".join(master_sites)
+            url = f"{self.api_base_url}{self.sites_endpoint}?master_sites={sites_param}"
+            
+            response = requests.get(url, timeout=30)
+            response.raise_for_status()
+            
+            raw_data = response.json()
+            
+            # Парсим ответ API
+            hosts = []
+            for item in raw_data:
+                try:
+                    master_site = item.get('master_site')
+                    modules = item.get('modules', [])
+                    
+                    if not master_site:
+                        logger.warning(f"Отсутствует master_site в ответе API: {item}")
+                        continue
+                    
+                    # Берём IP из первого модуля (предпочтительно 4G)
+                    ip = None
+                    if modules:
+                        first_module = modules[0]
+                        ip = first_module.get('ip_4g') or first_module.get('ip_3g')
+                    
+                    host = TemperatureResponse(
+                        hostname=master_site,
+                        ip=ip,
+                        vendor='nokia',
+                        availability=True
+                    )
+                    hosts.append(host)
+                    
+                except Exception as e:
+                    logger.warning(f"Ошибка парсинга сайта {item}: {e}")
+            
+            logger.info(f"Получено {len(hosts)} сайтов из API")
+            return hosts
+            
+        except Exception as e:
+            logger.error(f"Ошибка запроса к API сайтов: {e}")
+            raise RuntimeError(f"Cannot fetch sites from API: {e}")
 
 
 # =============================================================================
@@ -268,8 +362,11 @@ class PollingManager:
         self.config = config
         self._config_dict = config.model_dump()
         
-        # Кэш хостов в RAM
+        # Кэш хостов в RAM (только для массового опроса)
         self._host_cache = HostCache(ttl_hours=config.hosts_ttl_hours)
+        
+        # API для получения информации о конкретных сайтах (без кэширования)
+        self._site_api = APIHostFetcher(api_base_url=config.api_url)
         
         # Аварийный контрольный пункт
         self._checkpoint = EmergencyCheckpoint(
@@ -294,6 +391,101 @@ class PollingManager:
                 'chunk_size': config.chunk_size,
                 'poll_interval_hours': config.poll_interval_hours
             }
+        )
+    
+    # -------------------------------------------------------------------------
+    # Точечный опрос через API сайтов
+    # -------------------------------------------------------------------------
+    
+    async def fetch_and_poll_sites(self, master_sites: List[str]) -> PollingResult:
+        """
+        Точечный опрос через API сайтов (без кэширования).
+        
+        1. Получение информации о сайтах из API /api/v1/sites
+        2. Опрос полученных хостов
+        3. Запись результатов в БД
+        
+        Отличается от manual_poll:
+        - Не использует кэш хостов
+        - Всегда делает запрос к API
+        - Предназначен для опроса по master_site
+        
+        Args:
+            master_sites: список master_site для опроса
+        
+        Returns:
+            PollingResult со статистикой опроса
+        
+        Пример:
+            >>> manager = PollingManager(config)
+            >>> result = await manager.fetch_and_poll_sites(["NS1120", "NS0830"])
+            >>> print(f"Успех: {result.success_count}")
+        """
+        logger.info(f"НАЧАЛО ТОЧЕЧНОГО ОПРОСА ЧЕРЕЗ API: {len(master_sites)} сайтов")
+        logger.info(f"Сайты: {', '.join(master_sites)}")
+        
+        # Получение информации о сайтах из API
+        try:
+            hosts = self._site_api.fetch_sites(master_sites)
+        except Exception as e:
+            logger.error(f"Ошибка получения сайтов из API: {e}")
+            return PollingResult(
+                success_count=0,
+                error_count=len(master_sites),
+                skipped_count=0,
+                results=[]
+            )
+        
+        if not hosts:
+            logger.error("API вернул пустой список сайтов!")
+            return PollingResult(
+                success_count=0,
+                error_count=len(master_sites),
+                skipped_count=0,
+                results=[]
+            )
+        
+        # Проверка наличия данных за текущий час
+        current_hour = int(datetime.now().timestamp()) // 3600
+        has_data = await self._has_data_for_hour(hosts, current_hour)
+        
+        if has_data:
+            logger.info(
+                f"Данные за этот час уже есть, пропускаем. "
+                f"Используйте force=True через manual_poll для перезаписи"
+            )
+            return PollingResult(skipped_count=len(hosts))
+    
+        # Опрос хостов
+        loop = asyncio.get_running_loop()
+        results = await loop.run_in_executor(
+            None,
+            lambda: nokia_polling_module(
+                sites=[h.model_dump() for h in hosts],
+                fields={"temperature"},
+                batch_size=min(len(hosts), 10),
+                check_availability=True
+            )
+        )
+        
+        # Запись в БД
+        await self._save_results_to_db(results)
+        
+        # Статистика
+        success_count = len([r for r in results if r.get('status') == 'success'])
+        error_count = len([r for r in results if r.get('status') == 'error'])
+        skipped_count = len([r for r in results if r.get('status') == 'skipped_vendor'])
+        
+        logger.info(
+            f"ТОЧЕЧНЫЙ ОПРОС ЗАВЕРШЁН: "
+            f"успех={success_count}, ошибки={error_count}, пропущено={skipped_count}"
+        )
+        
+        return PollingResult(
+            success_count=success_count,
+            error_count=error_count,
+            skipped_count=skipped_count,
+            results=[TemperatureResponse(**r) for r in results]
         )
     
     # -------------------------------------------------------------------------

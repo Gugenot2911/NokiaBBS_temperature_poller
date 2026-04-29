@@ -8,7 +8,7 @@
 import json
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 from dataclasses import dataclass, field
 
 
@@ -24,11 +24,29 @@ class APIConfig:
     """Конфигурация API"""
     base_url: str = ""
     hosts_endpoint: str = "/api/v1/hosts"
+    sites_endpoint: str = "/api/v1/sites"
     
     @property
     def hosts_url(self) -> str:
         """Полный URL для получения списка хостов"""
         return f"{self.base_url}{self.hosts_endpoint}"
+
+    def get_sites_url(self, master_sites: Optional[List[str]] = None) -> str:
+        """
+        Получение URL для запроса сайтов.
+        
+        Args:
+            master_sites: список master_site для фильтрации (опционально)
+        
+        Returns:
+            URL с параметром master_sites при необходимости
+        """
+        url = f"{self.base_url}{self.sites_endpoint}"
+        if master_sites:
+            separator = "&" if "?" in url else "?"
+            sites_param = ",".join(master_sites)
+            url = f"{url}{separator}master_sites={sites_param}"
+        return url
 
 
 @dataclass
@@ -124,6 +142,7 @@ class ConfigLoader:
                 api = file_config['api']
                 config.api.base_url = api.get('base_url', config.api.base_url)
                 config.api.hosts_endpoint = api.get('hosts_endpoint', config.api.hosts_endpoint)
+                config.api.sites_endpoint = api.get('sites_endpoint', config.api.sites_endpoint)
             
             # Область опроса
             if 'polling' in file_config:

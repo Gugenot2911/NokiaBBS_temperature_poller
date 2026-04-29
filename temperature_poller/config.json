@@ -5,7 +5,8 @@
   },
   "api": {
     "base_url": "http://WSNS-LAVROV2:8001",
-    "hosts_endpoint": "/api/v1/hosts"
+    "hosts_endpoint": "/api/v1/hosts",
+    "sites_endpoint": "/api/v1/sites"
   },
   "polling": {
     "chunk_size": 10,
